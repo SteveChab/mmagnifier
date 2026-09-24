@@ -35,3 +35,9 @@ the camera pipeline for ~1 s, and `render()` fires on every button press.
 - `drawCurrentFrame()` must stay callable from all four sites (live loop, `render()`, `resize()`,
   camera start).
 - Anything that clears the canvas must restore the frozen frame — see `resize()`.
+- **Android WebView never exposes native zoom** — it hard-denies the pan/tilt/zoom permission, so
+  in the Android app every zoom level is a canvas crop of the stream (≈1080×2336 on a Galaxy A15).
+  Real optical detail beyond that would need a native camera layer (e.g. CameraX), which would
+  supersede this record. Confirmed on-device 2026-09-23.
+- Constraint sets sent with `applyConstraints` must contain only capabilities the track reports —
+  one unsupported key rejects the whole set. Use `zoomConstraints()`.

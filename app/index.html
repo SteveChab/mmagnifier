@@ -406,6 +406,7 @@
   let track = null;
   let zoomCaps = null;
   let supportsPOI = false;
+  let trackCaps = {};       // getCapabilities() of the live track — gates which constraints we send
   let streamW = 0, streamH = 0;
   let focusRevertTimer = null;
   let frozen = false;
@@ -413,6 +414,8 @@
   let frozenAtZoom = 1;     // state.zoom baked into the canvas when frozen; CSS scale = state.zoom / frozenAtZoom
   let frozenVideoFrame = null;    // full-res video frame captured at native-zoom=1 after freeze
   let frozenCaptureNativeZoom = 1;  // native zoom at frozenVideoFrame capture time
+  let frozenDetailFrame = null;   // frame at the live native zoom, captured before the zoom-out
+  let frozenDetailZoom  = 1;      // native zoom of frozenDetailFrame
   let ocrBlockZoom = 1;           // state.zoom at the time OCR blocks were rendered (for overlay tracking)
   let lastAppliedZoom = null;  // guards applyNativeZoom — skip if zoom didn't change
 
@@ -436,15 +439,10 @@
     }
 
     noCamera.style.display = 'none';
-    navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 3840 },
-        height: { ideal: 2160 },
-        focusMode: { ideal: 'continuous' },
-      },
-      audio: false,
-    })
+    const savedId = loadCameraId();
+    (savedId ? openCamera(savedId).catch(() => null) : Promise.resolve(null))
+    // No remembered camera, or it has gone away: let the browser choose, then check its choice.
+    .then(stream => stream || openCamera(null).then(preferAutofocusCamera))
     .then(stream => {
       video.srcObject = stream;
       track = stream.getVideoTracks()[0];
@@ -460,7 +458,11 @@
       const settings = (track.getSettings && track.getSettings()) || {};
       streamW = settings.width  || 1920;
       streamH = settings.height || 1080;
-      supportsPOI = 'pointsOfInterest' in caps;
+      trackCaps = caps;
+      // Chromium never lists pointsOfInterest as a capability (it is a setting), so testing for it
+      // alone was always false on Android. single-shot is the focus mode a tap drives.
+      supportsPOI = 'pointsOfInterest' in caps ||
+        (Array.isArray(caps.focusMode) && caps.focusMode.includes('single-shot'));
 
       if (caps.zoom && typeof caps.zoom.max === 'number') {
         zoomCaps = caps.zoom;  // used as a quality supplement — see canvas draw loop
@@ -492,6 +494,60 @@
     })
     .catch(() => { recovering = false; noCamera.style.display = 'flex'; });
   };
+
+  function openCamera(deviceId) {
+    const want = {
+      width:  { ideal: 3840 },
+      height: { ideal: 2160 },
+      focusMode: { ideal: 'continuous' },
+    };
+    if (deviceId) want.deviceId = { exact: deviceId };
+    else          want.facingMode = { ideal: 'environment' };
+    return navigator.mediaDevices.getUserMedia({ video: want, audio: false });
+  }
+
+  const CAMERA_KEY = 'mmagnifier-camera';
+  function loadCameraId() {
+    try { return localStorage.getItem(CAMERA_KEY); } catch (_) { return null; }
+  }
+  function saveCameraId(id) {
+    if (!id) return;
+    try { localStorage.setItem(CAMERA_KEY, id); } catch (_) {}
+  }
+
+  // `facingMode: 'environment'` does not mean "the main camera". On the Galaxy A15, Chromium
+  // hands back a fixed-focus rear lens (focusMode: ['manual']) — close-up print can never be
+  // sharp and tap-to-focus has nothing to drive. If the camera we got can't autofocus, try the
+  // other rear cameras for one that can. The choice is remembered, so this runs once per install.
+  async function preferAutofocusCamera(stream) {
+    const t = stream.getVideoTracks()[0];
+    const caps = (t.getCapabilities && t.getCapabilities()) || {};
+    const currentId = t.getSettings().deviceId;
+    // Browser doesn't report focus modes, or this camera already autofocuses: keep it.
+    if (!Array.isArray(caps.focusMode) || caps.focusMode.includes('continuous')) {
+      saveCameraId(currentId);
+      return stream;
+    }
+    const others = (await navigator.mediaDevices.enumerateDevices())
+      .filter(d => d.kind === 'videoinput' && d.deviceId && d.deviceId !== currentId);
+    // Android opens one camera at a time — release this one before probing the rest.
+    stream.getTracks().forEach(x => x.stop());
+    for (const d of others) {
+      const s = await openCamera(d.deviceId).catch(() => null);
+      if (!s) continue;
+      const st = s.getVideoTracks()[0];
+      const c = (st.getCapabilities && st.getCapabilities()) || {};
+      if (st.getSettings().facingMode === 'environment' &&
+          Array.isArray(c.focusMode) && c.focusMode.includes('continuous')) {
+        saveCameraId(d.deviceId);
+        return s;
+      }
+      s.getTracks().forEach(x => x.stop());
+    }
+    // No rear camera autofocuses — go back to the browser's choice.
+    saveCameraId(currentId);
+    return openCamera(currentId);
+  }
 
   window.requestCamera();
 
@@ -537,6 +593,20 @@
     panY = clamp(panY, -maxPanY, maxPanY);
     const sx = (vw - sw) / 2 - panX * sw / displayW;
     const sy = (vh - sh) / 2 - panY * sh / displayH;
+    // The native-zoomed detail frame covers the centre 1/r of the wide frame. When the view
+    // lies entirely inside it, draw from it — it is sharper than cropping the wide frame.
+    const det = frozenDetailFrame;
+    if (det && Math.abs(det.width / det.height - vw / vh) < 0.01) {
+      const r  = frozenDetailZoom / frozenCaptureNativeZoom;
+      const dw = vw / r, dh = vh / r, dx = (vw - dw) / 2, dy = (vh - dh) / 2;
+      const eps = 0.5;
+      if (sx >= dx - eps && sy >= dy - eps && sx + sw <= dx + dw + eps && sy + sh <= dy + dh + eps) {
+        const k = r * det.width / vw;  // wide-frame px → detail-frame px
+        ctx.drawImage(det, Math.max(0, (sx - dx) * k), Math.max(0, (sy - dy) * k),
+                      Math.min(det.width, sw * k), Math.min(det.height, sh * k), 0, 0, cw, ch);
+        return;
+      }
+    }
     ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, cw, ch);
   }
 
@@ -652,11 +722,16 @@
     // which fires on every button press — skipping no-op calls keeps UI response instant.
     if (z === lastAppliedZoom) return;
     lastAppliedZoom = z;
-    // advanced[] replaces all previous advanced constraints on every call —
-    // include videoStabilization and sharpness alongside zoom so they aren't reset.
-    track.applyConstraints({
-      advanced: [{ zoom: z, videoStabilization: false, sharpness: 8 }],
-    }).catch(() => {});
+    track.applyConstraints(zoomConstraints(z)).catch(() => {});
+  }
+
+  // Constraints for a native zoom level, limited to what this track supports. Chromium rejects
+  // the whole advanced set if any key is unsupported: bundling `sharpness` (which Android cameras
+  // don't expose) made every zoom call fail with OverconstrainedError, so native zoom never ran.
+  function zoomConstraints(z) {
+    const set = { zoom: z };
+    if (trackCaps.sharpness) set.sharpness = clamp(8, trackCaps.sharpness.min, trackCaps.sharpness.max);
+    return { advanced: [set] };
   }
 
   function render() {
@@ -1052,6 +1127,7 @@
       panX = panY = 0;
       frozenVideoFrame = null;
       frozenCaptureNativeZoom = 1;
+      frozenDetailFrame = null;
 
       // Immediate canvas snapshot — backs up the current view for rotation-restore and
       // the CSS-transform interim before frozenVideoFrame is ready.
@@ -1064,10 +1140,17 @@
       // with pixel-accurate canvas redraws — enabling full zoom-in/out on the frozen image.
       (async () => {
         const captureNativeZ = zoomCaps ? (zoomCaps.min || 1) : 1;
+        // Keep the frame on screen first: at native zoom it holds more real detail than any
+        // crop of the zoomed-out frame below. drawFrozenAtZoom uses it whenever the view fits.
+        const liveNativeZ = zoomCaps ? clamp(state.zoom, zoomCaps.min, zoomCaps.max) : 1;
+        if (track && liveNativeZ > captureNativeZ) {
+          const detail = await createImageBitmap(video).catch(() => null);
+          if (!frozen) return;
+          frozenDetailFrame = detail;
+          frozenDetailZoom  = liveNativeZ;
+        }
         if (track && zoomCaps) {
-          await track.applyConstraints({
-            advanced: [{ zoom: captureNativeZ, videoStabilization: false, sharpness: 8 }],
-          }).catch(() => {});
+          await track.applyConstraints(zoomConstraints(captureNativeZ)).catch(() => {});
           // Wait for the camera HAL to deliver a frame at the new zoom (typically ≤200 ms).
           await new Promise(resolve => setTimeout(resolve, 250));
           await waitForNextVideoFrame();
@@ -1103,6 +1186,7 @@
       frozenImage  = null;
       frozenVideoFrame = null;
       frozenCaptureNativeZoom = 1;
+      frozenDetailFrame = null;
       frozenAtZoom = 1;
       lastAppliedZoom = null;  // force applyNativeZoom to re-sync camera to current zoom
       applyNativeZoom();

@@ -2,13 +2,16 @@ const assert = require('assert');
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Match the app's own WebView. Any other browser with remote debugging on (Chrome, Brave)
+// also shows up as a WEBVIEW context, and attaching to it fails the whole run.
+const APP_WEBVIEW = 'WEBVIEW_com.mmagnifier.app';
+
 async function switchToWebView() {
   await browser.waitUntil(async () => {
     const contexts = await driver.getContexts();
-    return contexts.some(c => c.includes('WEBVIEW'));
+    return contexts.includes(APP_WEBVIEW);
   }, { timeout: 10000, timeoutMsg: 'WebView context never appeared — check that WebContentsDebuggingEnabled is set in MainActivity.java' });
-  const contexts = await driver.getContexts();
-  await driver.switchContext(contexts.find(c => c.includes('WEBVIEW')));
+  await driver.switchContext(APP_WEBVIEW);
 }
 
 async function ensureResumed() {

@@ -21,7 +21,8 @@
 | localStorage zoom persistence | ✅ `app.spec.js` | — | Restart app, assert zoom restored |
 | Camera live feed | ❌ | Manual | Glance at screen on open |
 | Torch LED illuminates | ❌ | Manual | Tap Torch, check physical LED |
-| Tap-to-focus | ❌ | Manual | iOS only (Android: known Chromium limitation, Issue #4) |
+| Tap-to-focus | ❌ | Manual | Tap label text; focus should snap there (Issue #4 gate fixed 2026-09-23) |
+| Main (autofocus) camera selected | ✅ verified via CDP | Manual | Galaxy A15: `camera 0`, focusMode includes `continuous`; label text sharp with background blurred |
 | Landscape layout | ❌ | Manual | Rotate device, check vertical button stack |
 | OCR reads real text | ❌ | Manual | Depends on camera/text |
 | TTS audio speaks | ❌ | Manual | Listen when Read tapped |
@@ -299,3 +300,9 @@ centred on black — it dropped to **6%**. The threshold sits cleanly between th
 **Change**: Wired release signing (`keystore.properties`-driven `signingConfig`); built first signed AAB.  **Risk**: Low (build config only)
 **Tests run**: `jarsigner -verify` → "jar verified"; signer cert = `CN=mmagnifier`; package = `com.mmagnifier.app`; `versionCode 1` / `versionName 1.1`.  **Result**: Pass
 **Gaps**: On-device smoke (torch / pause frame / read-aloud) not yet re-run against the signed build — do this during Step 2 screenshot capture on the real device.
+
+## Camera selection + focus + zoom constraints — 2026-09-23
+**Change**: Pick a rear camera with continuous AF (remembered); tap-to-focus gated on `single-shot`; zoom constraints limited to reported caps; frozen frame keeps native-zoom detail.  **Risk**: High
+**Tests run**: full WebDriverIO suite on Galaxy A15 (SM-A156U, Android 14, WebView 153), portrait, bottle label in frame; CDP checks of selected camera, focus mode and persisted id.  **Result**: Pass — 19/19, 0 skipped
+**Gaps**: tap-to-focus visual confirmation (manual); camera choice on multi-lens phones (telephoto could be kept by the browser's default — untested, no device); iOS path untested. The suite must run in **portrait** — landscape hides button labels and every label assertion reads `''`.
+

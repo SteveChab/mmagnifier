@@ -2,6 +2,45 @@
 
 ---
 
+## 2026-09-23 — Autofocus camera selection, tap-to-focus, native-zoom constraint fix
+**Type**: Fix
+**Changed**: Diagnosed on a Galaxy A15 (SM-A156U, Android 14, Chromium 153) over CDP after reports
+of blurry, grainy text, no autofocus and no tap-to-focus. Three root causes:
+
+*Wrong lens.* `facingMode: 'environment'` gave `camera 2` — a fixed-focus rear lens whose only
+focus mode is `manual`. The app could never autofocus. New `preferAutofocusCamera()` checks the
+chosen camera's `focusMode` capability and, if `continuous` is missing, probes the other cameras
+for a rear one that has it (here `camera 0`, the main camera: continuous + single-shot, 10 cm
+minimum focus). The choice is stored under the `mmagnifier-camera` localStorage key, so the probe
+runs once; a vanished id falls back to a fresh probe.
+
+*Tap-to-focus gate was always false.* It required `'pointsOfInterest' in caps`, but
+`pointsOfInterest` is a setting, never a capability. It now also enables when the camera offers
+`single-shot` focus. The `pointsOfInterest` + `single-shot` call resolves on-device (Issue #4).
+
+*Native zoom was always rejected.* Every zoom call bundled `sharpness: 8`; Android cameras don't
+expose `sharpness`, and Chromium rejects the whole advanced set (`OverconstrainedError:
+Unsupported constraint`, swallowed by `.catch`). New `zoomConstraints()` sends only supported
+keys. This restores native zoom in browsers — **but not in the Android app**: Android WebView
+hard-denies the pan/tilt/zoom permission, so the app never sees a `zoom` capability and all
+zoom remains a canvas crop of the ~1080×2336 stream (recorded in ADR 0002). `takePhoto()` was
+tested as a higher-res source for frozen frames; Chromium caps it at the same 2336×1440.
+
+Freeze now keeps the frame shown at the live native zoom (`frozenDetailFrame`) and draws from it
+whenever the paused view fits inside it, so pausing does not drop to a crop of the zoomed-out
+capture. Inactive on Android WebView (no native zoom); applies on iOS and browsers.
+
+**Regression checked**: yes — on-device via CDP: main camera selected and remembered, continuous
+AF active, tap-to-focus call accepted, draw loop live. Label text on a supplement bottle sharp
+at 1× with background defocused (previously soft across the frame).
+**Tests**: Pass — **19 passing, 0 skipped** on the Galaxy A15 (first full run on real hardware; the
+OCR/Issue #2 test ran instead of skipping because real print was in frame). Remembered camera
+confirmed after the suite's app restarts. Tap-to-focus and close-range refocus still need a
+manual eyeball check. `switchToWebView()` now targets `WEBVIEW_com.mmagnifier.app` explicitly —
+with Brave's remote debugging on, the suite had attached to Brave and failed before any test.
+
+---
+
 ## 2026-09-23 — Release signing wired for Play upload
 **Type**: Build/Ops
 **Changed**: Added a guarded `signingConfigs.release` to `native/android/app/build.gradle` that

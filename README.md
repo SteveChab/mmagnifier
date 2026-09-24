@@ -57,9 +57,9 @@ The git repository root is the web app itself, with the native project nested in
 
 The app uses a two-tier zoom strategy, auto-detected at startup:
 
-1. **Tier A — Native track zoom** (preferred): `track.applyConstraints({ advanced: [{ zoom, videoStabilization: false, sharpness: 8 }] })` drives the camera's actual sensor/lens zoom for maximum sharpness. `videoStabilization: false` requests raw optical output (bypasses EIS blurring); `sharpness: 8` requests in-sensor sharpening. Both are silently ignored on devices that don't expose these constraints. Available on iOS Safari 17.4+ and modern Android Chrome.
+1. **Tier A — Native track zoom** (when the platform exposes it): `track.applyConstraints(zoomConstraints(z))` drives the camera's own zoom, so the ISP crops the full sensor readout instead of the canvas upscaling the stream. `zoomConstraints()` sends only keys present in `track.getCapabilities()` — Chromium rejects the *entire* advanced set with `OverconstrainedError` if any one key is unsupported, which is how a bundled `sharpness: 8` silently disabled native zoom until Sept 2026. **Android WebView never exposes `zoom`**: it hard-denies the camera pan/tilt/zoom permission (`aw_permission_manager.cc`), so in the Android app this tier is always inactive. It does work in Android Chrome and on iOS Safari 17.4+.
 
-2. **Tier B — Canvas crop from high-res stream** (always active): The `<video>` element is a hidden data source; the `<canvas>` is the visible display layer. `drawCurrentFrame()` crops a sub-region of the video frame to apply any zoom beyond the native hardware cap. Because the source is 4K, this stays sharp well past what CSS upscaling can achieve.
+2. **Tier B — Canvas crop from high-res stream** (always active): The `<video>` element is a hidden data source; the `<canvas>` is the visible display layer. `drawCurrentFrame()` crops a sub-region of the video frame to apply any zoom beyond the native hardware cap. The app asks for 4K, but what it gets is device- and browser-dependent — Chromium on a Galaxy A15 caps at 2336×1440 (delivered as 1080×2336 in portrait), and `ImageCapture.takePhoto()` is capped the same way, so it offers no extra detail for frozen frames.
 
 `drawCurrentFrame()` lives at the outer IIFE scope so it can be called from four sites: the live draw loop, `render()` (zoom-while-frozen), `resize()` (rotate-while-frozen), and the initial camera start. Canvas `imageSmoothingQuality` is set dynamically per draw: `'high'` (Lanczos) when frozen for maximum detail, `'low'` (bilinear) during the live 30 fps feed for performance — a canvas resize resets this to the default so it must be re-applied on every draw call.
 
@@ -92,7 +92,9 @@ The torch uses `track.applyConstraints({ advanced: [{ torch: bool }] })` as the 
 
 ### Autofocus
 
-The app requests `focusMode: { ideal: 'continuous' }` in the initial camera constraints, keeping the AF loop active as you move the phone. On devices that expose `pointsOfInterest`, a single tap on the viewfinder triggers single-shot focus on that spot, then reverts to continuous after 2 seconds.
+`facingMode: 'environment'` does not guarantee the main camera. On the Galaxy A15, Chromium picks a fixed-focus rear lens (`focusMode: ['manual']`), which can never autofocus. On first start `preferAutofocusCamera()` checks the chosen camera's `focusMode` capability; if it lacks `continuous`, it probes the other cameras for a rear one that has it. The winning `deviceId` is stored under the `mmagnifier-camera` localStorage key so later starts (and camera recovery) open it directly, falling back to a fresh probe if it disappears.
+
+Tap-to-focus sends `pointsOfInterest` + `focusMode: 'single-shot'`, then reverts to continuous after 2 seconds. It is enabled when the camera offers `single-shot` focus. `pointsOfInterest` itself is a *setting*, never a capability, so the original `'pointsOfInterest' in caps` gate was always false on Android (Issue #4).
 
 ## Running Locally
 
