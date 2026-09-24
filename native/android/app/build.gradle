@@ -16,8 +16,27 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // Signing credentials live in keystore.properties at the project root
+            // (alongside web/, outside the git repo). When that file is absent,
+            // release stays unsigned — identical to the prior behavior.
+            def ksPropsFile = file("${rootDir}/../../../keystore.properties")
+            if (ksPropsFile.exists()) {
+                def ksProps = new Properties()
+                ksPropsFile.withInputStream { ksProps.load(it) }
+                storeFile file(ksProps.getProperty('MMAG_STORE_FILE'))
+                storePassword ksProps.getProperty('MMAG_STORE_PASSWORD')
+                keyAlias ksProps.getProperty('MMAG_KEY_ALIAS')
+                keyPassword ksProps.getProperty('MMAG_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
+            if (file("${rootDir}/../../../keystore.properties").exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

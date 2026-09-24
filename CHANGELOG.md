@@ -2,6 +2,20 @@
 
 ---
 
+## 2026-09-23 — Release signing wired for Play upload
+**Type**: Build/Ops
+**Changed**: Added a guarded `signingConfigs.release` to `native/android/app/build.gradle` that
+loads the upload keystore path + credentials from `keystore.properties` at the project root
+(alongside `web/`, outside the git repo). When that file is absent, release stays unsigned —
+identical to prior behavior. No app runtime code changed. Produced the first signed release AAB
+(`versionCode 1` / `versionName 1.1`, `com.mmagnifier.app`), verified signed with the mmagnifier
+upload key (SHA-256 36:35:A7:…:F4:B0).
+**Regression checked**: N/A — build config only; no runtime/color/camera/UI code touched.
+**Tests**: WebDriverIO suite not run (no behavior change; needs a USB device). Signature and
+package verified on the built artifact; on-device smoke test to follow during Step 2 screenshots.
+
+---
+
 ## 2026-09-01 — Freeze/Zoom/Pan Test Coverage
 
 **Type**: Feature (test coverage)

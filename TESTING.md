@@ -294,3 +294,8 @@ medicine label and it runs for real.
 8×8 grid of canvas points and requires >70% non-black. Measured live at **94%** on a healthy frozen
 frame; when the canvas was artificially rewritten into the Issue #1 failure shape — a small image
 centred on black — it dropped to **6%**. The threshold sits cleanly between the two.
+
+## Native build/signing — 2026-09-23
+**Change**: Wired release signing (`keystore.properties`-driven `signingConfig`); built first signed AAB.  **Risk**: Low (build config only)
+**Tests run**: `jarsigner -verify` → "jar verified"; signer cert = `CN=mmagnifier`; package = `com.mmagnifier.app`; `versionCode 1` / `versionName 1.1`.  **Result**: Pass
+**Gaps**: On-device smoke (torch / pause frame / read-aloud) not yet re-run against the signed build — do this during Step 2 screenshot capture on the real device.
